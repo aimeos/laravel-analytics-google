@@ -10,7 +10,8 @@ use Google\Client;
 class Ga4 implements Driver
 {
     private ?string $propertyId;
-    private ?AnalyticsData $analytics;
+    private ?AnalyticsData $analytics = null;
+    private array $types = [];
 
 
     public function __construct(array $config = [])
@@ -27,15 +28,22 @@ class Ga4 implements Driver
     }
 
 
-    public function stats(string $url, int $days = 30, array $types = []): ?array
+    public function types(array $types): Driver
+    {
+        $this->types = $types;
+        return $this;
+    }
+
+
+    public function stats(string $url, int $days = 30): ?array
     {
         if (!$this->propertyId || !$this->analytics) {
             return null;
         }
 
-        $types = empty($types)
-            ? ['views', 'visits', 'durations', 'conversions', 'countries', 'referrers']
-            : $types;
+        $types = !empty($this->types)
+            ? $this->types
+            : ['views', 'visits', 'durations', 'conversions', 'countries', 'referrers'];
 
         $result = [];
         $daysRange = $this->dateRange($days);
@@ -45,7 +53,7 @@ class Ga4 implements Driver
         if (in_array('views', $types)) $dailyMetricsMap['views'] = 'screenPageViews';
         if (in_array('visits', $types)) $dailyMetricsMap['visits'] = 'sessions';
         if (in_array('durations', $types)) $dailyMetricsMap['durations'] = 'averageSessionDuration';
-        if (in_array('conversions', $types)) $dailyMetricsMap['conversions'] = 'conversions';
+        if (in_array('conversions', $types)) $dailyMetricsMap['conversions'] = 'keyEvents';
 
         if (!empty($dailyMetricsMap)) {
             // Single RunReportRequest with multiple metrics
