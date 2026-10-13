@@ -16,11 +16,12 @@ class Ga4 implements Driver
 
     public function __construct(array $config = [])
     {
-        $this->propertyId = $config['propertyId'] ?? null;
+        $this->propertyId = $config['propertyid'] ?? $config['propertyId'] ?? null;
+        $auth = $config['credentials'] ?? $config['auth'] ?? null;
 
-        if (!empty($config['auth'])) {
+        if (!empty($auth)) {
             $client = new Client();
-            $client->setAuthConfig($config['auth']);
+            $client->setAuthConfig($auth);
             $client->addScope('https://www.googleapis.com/auth/analytics.readonly');
 
             $this->analytics = new AnalyticsData($client);
