@@ -44,7 +44,7 @@ class Ga4 implements Driver
 
         $types = !empty($this->types)
             ? $this->types
-            : ['views', 'visits', 'durations', 'conversions', 'countries', 'referrers'];
+            : ['views', 'visits', 'durations', 'conversions', 'countries', 'referrers', 'links'];
 
         $result = [];
         $daysRange = $this->dateRange($days);
@@ -97,7 +97,77 @@ class Ga4 implements Driver
             $result['referrers'] = $this->mapReferrers($report);
         }
 
+        // --- 4️⃣ Links (next internal pages, outbound clicks and downloads) ---
+        if (in_array('links', $types)) {
+            $request = new AnalyticsData\BatchRunReportsRequest([
+                'requests' => [
+                    $this->makeFollowingRequest($daysRange, $url),
+                    $this->makeClickRequest($daysRange, $url),
+                ]
+            ]);
+
+            $reports = $this->analytics->properties->batchRunReports('properties/' . $this->propertyId, $request)->getReports();
+            $result['links'] = $this->mapLinks($reports[0], $reports[1], $url);
+        }
+
         return $result;
+    }
+
+
+    protected function makeFollowingRequest(array $daysRange, string $url): AnalyticsData\RunReportRequest
+    {
+        // Page views whose referrer is the page itself
+        return new AnalyticsData\RunReportRequest([
+            'dimensions' => [
+                new AnalyticsData\Dimension(['name' => 'hostName']),
+                new AnalyticsData\Dimension(['name' => 'pagePath']),
+            ],
+            'metrics' => [ new AnalyticsData\Metric(['name' => 'screenPageViews']) ],
+            'dateRanges' => [ new AnalyticsData\DateRange([
+                'startDate' => $daysRange[0],
+                'endDate'   => $daysRange[1]
+            ]) ],
+            'dimensionFilter' => new AnalyticsData\FilterExpression([
+                'filter' => new AnalyticsData\Filter([
+                    'fieldName' => 'pageReferrer',
+                    'stringFilter' => new AnalyticsData\StringFilter([
+                        'matchType' => 'EXACT',
+                        'value' => $url
+                    ])
+                ])
+            ]),
+            'limit' => 100,
+        ]);
+    }
+
+
+    protected function makeClickRequest(array $daysRange, string $url): AnalyticsData\RunReportRequest
+    {
+        // Outbound clicks and downloads tracked by enhanced measurement
+        return new AnalyticsData\RunReportRequest([
+            'dimensions' => [ new AnalyticsData\Dimension(['name' => 'linkUrl']) ],
+            'metrics' => [ new AnalyticsData\Metric(['name' => 'eventCount']) ],
+            'dateRanges' => [ new AnalyticsData\DateRange([
+                'startDate' => $daysRange[0],
+                'endDate'   => $daysRange[1]
+            ]) ],
+            'dimensionFilter' => new AnalyticsData\FilterExpression([
+                'andGroup' => new AnalyticsData\FilterExpressionList([
+                    'expressions' => [
+                        $this->pageFilter($url),
+                        new AnalyticsData\FilterExpression([
+                            'filter' => new AnalyticsData\Filter([
+                                'fieldName' => 'eventName',
+                                'inListFilter' => new AnalyticsData\InListFilter([
+                                    'values' => ['click', 'file_download']
+                                ])
+                            ])
+                        ]),
+                    ]
+                ])
+            ]),
+            'limit' => 100,
+        ]);
     }
 
 
@@ -164,6 +234,24 @@ class Ga4 implements Driver
             ])
             ->all();
     }
+
+    protected function mapLinks(AnalyticsData\RunReportResponse $following, AnalyticsData\RunReportResponse $clicks, string $url): array
+    {
+        $self = parse_url($url, PHP_URL_HOST) . parse_url($url, PHP_URL_PATH);
+
+        $pages = collect($following->getRows() ?? [])->map(fn($row) => [
+            'key' => $row->getDimensionValues()[0]->getValue() . $row->getDimensionValues()[1]->getValue(),
+            'value' => (float) $row->getMetricValues()[0]->getValue(),
+        ])->filter(fn($item) => $item['key'] !== $self); // reloads
+
+        $links = collect($clicks->getRows() ?? [])->map(fn($row) => [
+            'key' => $row->getDimensionValues()[0]->getValue(),
+            'value' => (float) $row->getMetricValues()[0]->getValue(),
+        ]);
+
+        return $pages->concat($links)->sortByDesc('value')->values()->all();
+    }
+
 
     protected function mapReferrers(AnalyticsData\RunReportResponse $report): array
     {
